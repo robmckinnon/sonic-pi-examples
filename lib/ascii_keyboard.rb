@@ -25,11 +25,29 @@ def truncate_keys(interval, count)
    end
 end
 
+def note_labels(notes, scale_count, octave, filter, space, press, nonpress)
+  labels = get[notes].cycle(scale_count)
+    .each_with_index.map{|n, i| "#{n}#{octave + i / get[notes].size}" }
+    .map{|n| filter.include?(n) ? n : get[space]}
+  presslabels = labels.map{|n| filter.include?(n) ? get[press] : get[nonpress]}
+  [labels, presslabels]
+end
+def add_spacing(spacing, scale_count, presslabels, charwidth)
+  get[spacing].cycle(scale_count).map{|x| x}
+    .zip(presslabels)
+    .flatten
+    .join('')[0, charwidth]
+end
+
+@ak_cache = {}
+
 define :ascii_keyboard do |c, tonic=nil|
   return [] if !c || c.size == 0
-  ch = c.map{|x| note_info(x).midi_string}.to_a
+  key = [c.to_a, tonic]
+  return @ak_cache[key] if @ak_cache[key]
+
+  tonic = note_info(tonic) unless tonic.nil?
   first_note = note_info(c[0])
-  tonic = tonic && note_info(tonic)
   octave = (tonic || first_note).octave
   width = ((c.last - note("C#{octave}"))/ 11.0 * 7).ceil
 
@@ -37,35 +55,25 @@ define :ascii_keyboard do |c, tonic=nil|
   key_count = [7, width].max
   key_count = key_count + truncate_keys if key_count < 10
   scale_count = (key_count / 7) + 1
-  mod_key_count_zero = key_count % 7 == 0
+  ch = c.map{|x| note_info(x).midi_string}.to_a
 
-  note_labels = -> (notes, scale_count, octave, filter, space, press, nonpress) {
-    labels = notes.cycle(scale_count)
-    .each_with_index.map{|n, i| "#{n}#{octave + i / notes.size}" }
-    .map{|n| filter.include?(n) ? n : space}
-    presslabels = labels.map{|n| filter.include?(n) ? press : nonpress}
-    [labels, presslabels]
-  }
-  add_spacing = -> (spacing, scale_count, presslabels, charwidth) {
-    spacing.cycle(scale_count).map{|x| x}
-    .zip(presslabels)
-    .flatten
-    .join('')[0, charwidth]
-  }
+  opts = [scale_count, octave, ch, :space_2, :press_2, :space_2]
+  labels, keypresses   = note_labels :naturals, *opts
 
-  labels, keypresses   = note_labels[get[:naturals], scale_count, octave, ch, get[:space_2], get[:press_2], get[:space_2]]
-  opts = [scale_count, octave, ch, get[:space_1], get[:press_1], get[:nopress]]
-  slabels, skeypresses = note_labels[get[:sharps], *opts]
-  flabels, fkeypresses = note_labels[get[:flats], *opts]
+  opts = [scale_count, octave, ch, :space_1, :press_1, :nopress]
+  slabels, skeypresses = note_labels :sharps, *opts
+  flabels, fkeypresses = note_labels :flats, *opts
+
   blabels     = slabels.zip(flabels).map{|s,f| s == get[:space_1] ? f : s}
   bkeypresses = skeypresses.zip(fkeypresses).map{|s,f| s == get[:nopress] ? f : s}
 
   charwidth = 1 + key_count*4
 
-  blabels = add_spacing[get[:b_space], scale_count, blabels, charwidth]
+  blabels = add_spacing :b_space, scale_count, blabels, charwidth
   blabels = blabels[2, blabels.size] + '__'
 
-  bkeypresses = add_spacing[get[:l_space], scale_count, bkeypresses, charwidth].tr('-',' ')
+  bkeypresses = add_spacing(:l_space, scale_count, bkeypresses, charwidth).tr('-',' ')
+  mod_key_count_zero = key_count % 7 == 0
   bkeypresses = bkeypresses[2, blabels.size] + (mod_key_count_zero ? ' |' : '| ')
   bkeys = bkeypresses.tr('*_',' ')
 
@@ -73,7 +81,7 @@ define :ascii_keyboard do |c, tonic=nil|
   keypresses = ('|' + keypresses.join(' |'))[0, charwidth]
   keys = keypresses.tr(' *','_')
 
-  [
+  lines = [
     blabels,
     bkeys,
     bkeys,
@@ -83,6 +91,8 @@ define :ascii_keyboard do |c, tonic=nil|
     labels
   ].flatten
   .map{|line| truncate_keys > 0 ? line[truncate_keys*4, line.size - truncate_keys*4] : line}
+  @ak_cache[key] = lines
+  lines
 end
 
 use_synth :hoover
